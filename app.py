@@ -5,9 +5,11 @@ FastAPI + OpenRouter + 5 agents SaaS
 """
 
 import os
+import sys
 import json
 import time
 import httpx
+import subprocess
 from pathlib import Path
 from datetime import datetime
 from fastapi import FastAPI, Body
@@ -18,6 +20,44 @@ from typing import Optional, List
 
 # Configuration
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
+
+# Google Drive File ID pour la vérification des mises à jour
+# 1. Upload version-template.json sur Google Drive
+# 2. Partage -> "Tout le monde avec le lien"
+# 3. Copie l'ID du fichier (ex: 1ABCxyz...)
+# 4. Mets-le ici ou dans la variable d'env GOOGLE_DRIVE_UPDATE_ID
+GOOGLE_DRIVE_UPDATE_ID = os.environ.get("GOOGLE_DRIVE_UPDATE_ID", "1Db6XxdPMVplJmxze7M7q7VPY4lN8xII6")
+UPDATE_CHECK_URL = f"https://drive.google.com/uc?export=view&id={GOOGLE_DRIVE_UPDATE_ID}" if GOOGLE_DRIVE_UPDATE_ID else ""
+
+# Version locale de l'application
+APP_VERSION_DEFAULT = "3.0"
+APP_VERSION_FILE = Path(__file__).parent / "current_version.txt"
+APP_VERSION_URL = "https://github.com/tomtechclair/ia-agent-dashboard"
+
+def load_app_version():
+    """Charge la version depuis le fichier persistant, sinon utilise la valeur par défaut"""
+    try:
+        if APP_VERSION_FILE.exists():
+            v = APP_VERSION_FILE.read_text(encoding="utf-8").strip()
+            if v:
+                print(f"[VERSION] Version chargée depuis le fichier : {v}")
+                return v
+    except Exception as e:
+        print(f"[VERSION] Erreur lecture fichier version : {e}")
+    print(f"[VERSION] Version par défaut : {APP_VERSION_DEFAULT}")
+    return APP_VERSION_DEFAULT
+
+def save_app_version(version):
+    """Sauvegarde la version dans le fichier persistant"""
+    try:
+        APP_VERSION_FILE.write_text(version.strip(), encoding="utf-8")
+        print(f"[VERSION] Version sauvegardée : {version}")
+        return True
+    except Exception as e:
+        print(f"[VERSION] Erreur sauvegarde version : {e}")
+        return False
+
+APP_VERSION = load_app_version()
 
 app = FastAPI(title="IA-Agent-tom.ai.official [AIDE & SUPPORT]")
 
@@ -161,6 +201,213 @@ async def call_openrouter(messages, model):
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "time": datetime.now().isoformat()}
+
+@app.get("/api/check-update")
+async def check_update():
+    """Verifie si une mise a jour est disponible via Google Drive ou fallback"""
+    try:
+        # Essayer de recuperer le fichier version depuis Google Drive
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+            resp = await client.get(UPDATE_CHECK_URL)
+            if resp.status_code == 200:
+                # Google Drive renvoie parfois une page HTML au lieu du JSON
+                content_type = resp.headers.get("content-type", "")
+                if "text/html" in content_type.lower():
+                    # Google Drive a affiche une page intermediaire
+                    # On essaie avec confirm=t
+                    resp2 = await client.get(UPDATE_CHECK_URL + "&confirm=t")
+                    if resp2.status_code == 200:
+                        remote = resp2.json()
+                    else:
+                        raise Exception(f"Google Drive blocked: HTTP {resp2.status_code}")
+                else:
+                    remote = resp.json()
+            else:
+                raise Exception(f"HTTP {resp.status_code}")
+    except Exception as e:
+        # Fallback : pas de reponse, on retourne simplement la version locale
+        return {
+            "current_version": APP_VERSION,
+            "update_available": False,
+            "error": str(e),
+            "download_url": APP_VERSION_URL
+        }
+
+    remote_version = remote.get("latest_version", "0.0")
+    remote_title = remote.get("title", "Nouvelle version disponible")
+    remote_changes = remote.get("changes", [])
+    remote_notes = remote.get("notes", "")
+    # Toujours utiliser le lien GitHub comme URL de téléchargement
+    # (le lien Google Drive est juste pour la vérification de version)
+    remote_download = APP_VERSION_URL
+
+    update_available = compare_versions(remote_version, APP_VERSION) > 0
+
+    return {
+        "current_version": APP_VERSION,
+        "latest_version": remote_version,
+        "update_available": update_available,
+        "title": remote_title,
+        "changes": remote_changes,
+        "notes": remote_notes,
+        "download_url": remote_download
+    }
+
+def compare_versions(v1, v2):
+    """Compare deux versions 'X.Y'. Retourne >0 si v1 > v2, 0 si egal, <0 si v1 < v2"""
+    try:
+        parts1 = [int(x) for x in str(v1).split(".")]
+        parts2 = [int(x) for x in str(v2).split(".")]
+        for i in range(max(len(parts1), len(parts2))):
+            p1 = parts1[i] if i < len(parts1) else 0
+            p2 = parts2[i] if i < len(parts2) else 0
+            if p1 != p2:
+                return p1 - p2
+        return 0
+    except:
+        return 0
+
+@app.post("/api/apply-update")
+async def apply_update():
+    """Applique la mise a jour directement : git pull + restart"""
+    try:
+        repo_path = Path(__file__).parent
+        output_lines = []
+        new_version = None
+        
+        # 1. git fetch
+        output_lines.append("🔍 Vérification des mises à jour...")
+        fetch = subprocess.run(
+            ["git", "fetch"],
+            cwd=repo_path,
+            capture_output=True, text=True, timeout=30
+        )
+        if fetch.returncode != 0:
+            return JSONResponse(
+                status_code=500,
+                content={"success": False, "output": [fetch.stderr.strip()]}
+            )
+        
+        # 2. Voir les changements
+        output_lines.append("📋 Récupération des changements...")
+        log = subprocess.run(
+            ["git", "log", "HEAD..origin/master", "--oneline", "--no-color"],
+            cwd=repo_path,
+            capture_output=True, text=True, timeout=15
+        )
+        if log.stdout.strip():
+            commits = log.stdout.strip().split("\n")
+            for c in commits[:10]:
+                output_lines.append(f"  • {c}")
+        
+        # 3. git pull
+        output_lines.append("⬇️  Téléchargement de la mise à jour...")
+        pull = subprocess.run(
+            ["git", "pull"],
+            cwd=repo_path,
+            capture_output=True, text=True, timeout=60
+        )
+        if pull.returncode != 0:
+            return JSONResponse(
+                status_code=500,
+                content={"success": False, "output": [pull.stderr.strip()]}
+            )
+        
+        output_lines.append("✅ Mise à jour appliquée avec succès !")
+        
+        # 4. Déterminer la nouvelle version (3 sources de fiabilité décroissante)
+        output_lines.append("💾 Enregistrement de la nouvelle version...")
+        import re
+        
+        # Source A: Lire APP_VERSION_DEFAULT depuis le nouveau app.py (juste mis à jour par git pull)
+        try:
+            new_app_py = (repo_path / "app.py").read_text(encoding="utf-8")
+            m = re.search(r'APP_VERSION_DEFAULT\s*=\s*["\']([^"\']+)["\']', new_app_py)
+            if m:
+                new_version = m.group(1).strip()
+                output_lines.append(f"  → Version depuis le code: {new_version}")
+        except Exception as e:
+            output_lines.append(f"  ⚠️ Impossible de lire le nouveau code: {e}")
+        
+        # Source B: Google Drive (si la version du code a échoué)
+        if not new_version:
+            try:
+                async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+                    resp = await client.get(UPDATE_CHECK_URL)
+                    if resp.status_code == 200:
+                        content_type = resp.headers.get("content-type", "")
+                        if "text/html" in content_type.lower():
+                            resp2 = await client.get(UPDATE_CHECK_URL + "&confirm=t")
+                            if resp2.status_code == 200:
+                                remote = resp2.json()
+                            else:
+                                remote = None
+                        else:
+                            remote = resp.json()
+                    else:
+                        remote = None
+                if remote:
+                    gv = remote.get("latest_version", "").strip()
+                    if gv:
+                        new_version = gv
+                        output_lines.append(f"  → Version depuis Google Drive: {new_version}")
+            except Exception as e:
+                output_lines.append(f"  ⚠️ Google Drive indisponible: {e}")
+        
+        # Source C: Fallback - garder la version actuelle
+        if not new_version:
+            new_version = APP_VERSION
+            output_lines.append(f"  → Version actuelle conservée: {new_version}")
+        
+        # Toujours sauvegarder la version déterminée
+        save_app_version(new_version)
+        output_lines.append(f"  ✅ Version enregistrée: {new_version}")
+        
+        # 5. Redémarrer le serveur proprement
+        output_lines.append("🔄 Redémarrage du serveur...")
+        current_pid = os.getpid()
+        
+        restart_script = repo_path / "restart.bat"
+        restart_script.write_text(
+            f"@echo off\n"
+            f"echo Redémarrage du serveur IA-Agent...\n"
+            f"timeout /t 2 /nobreak >nul\n"
+            f":: Tue l'ancien processus serveur (PID {current_pid})\n"
+            f"taskkill /f /pid {current_pid} 2>nul\n"
+            f":: Attend que le port soit libéré\n"
+            f"timeout /t 3 /nobreak >nul\n"
+            f"cd /d \"{repo_path}\"\n"
+            f"echo Démarrage du nouveau serveur...\n"
+            f"python app.py\n"
+        )
+        
+        subprocess.Popen(["cmd", "/c", str(restart_script)], cwd=repo_path)
+        
+        # Retourner le resultat avant que le processus soit tué
+        return {
+            "success": True,
+            "output": output_lines,
+            "restarting": True
+        }
+        
+    except subprocess.TimeoutExpired:
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "output": ["⏱️ La mise à jour a pris trop de temps."]}
+        )
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "output": [f"❌ Erreur: {str(e)}"]}
+        )
+
+@app.get("/api/version")
+async def get_version():
+    """Retourne la version actuelle de l'application"""
+    return {
+        "version": APP_VERSION,
+        "version_url": APP_VERSION_URL
+    }
 
 @app.post("/api/chat")
 async def chat(req: ChatRequest):

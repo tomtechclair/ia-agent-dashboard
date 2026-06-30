@@ -11,3 +11,5 @@ backups/
 help_messages.json
 .env
 *.zip
+current_version.txt
+restart.bat

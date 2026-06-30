@@ -705,6 +705,24 @@ html, body {
   transition: all var(--transition);
 }
 .chat-input-toolbar button:hover { background: var(--surface2); color: var(--text2); }
+.update-check-btn { margin-left: 4px; position: relative; }
+.update-check-btn.has-update { color: var(--success) !important; animation: pulse-update 2s infinite; }
+.update-check-btn.checking { opacity: 0.6; pointer-events: none; }
+@keyframes pulse-update {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.15); }
+}
+.update-check-btn .badge-dot {
+  position: absolute; top: 2px; right: 2px;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--success); border: 2px solid var(--surface);
+}
+.update-check-btn.loading::after {
+  content: ''; position: absolute; inset: 4px;
+  border: 2px solid var(--text3); border-top-color: var(--primary);
+  border-radius: 50%; animation: spin 0.6s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
 .chat-input-toolbar .model-pill {
   margin-left: auto;
   padding: 3px 10px; border-radius: 6px;
@@ -940,10 +958,43 @@ html, body {
 /* === PROFILE MODAL === */
 .profile-overlay {
   position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-  background: rgba(0,0,0,0.5); z-index: 2000;
+  background: rgba(0,0,0,0.5); z-index: 1000;
   opacity: 0; pointer-events: none; transition: opacity 0.3s ease;
 }
 .profile-overlay.show { opacity: 1; pointer-events: all; }
+.update-modal {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%) scale(0.9);
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 16px; width: 380px; max-width: 90vw;
+  z-index: 1001; opacity: 0; pointer-events: none;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: var(--shadow-lg); overflow: hidden;
+}
+.update-modal.show { opacity: 1; pointer-events: all; transform: translate(-50%,-50%) scale(1); }
+.update-modal .update-changelog {
+  margin: 8px 0; padding: 0; list-style: none;
+}
+.update-modal .update-changelog li {
+  padding: 6px 8px; border-bottom: 1px solid var(--border);
+  font-size: 12px; color: var(--text2); line-height: 1.4;
+}
+.update-modal .update-changelog li:last-child { border-bottom: none; }
+.update-modal .update-download-btn {
+  display: block; width: 100%; padding: 10px;
+  background: var(--primary); color: white; border: none;
+  border-radius: 8px; font-size: 13px; font-weight: 600;
+  cursor: pointer; text-align: center; text-decoration: none;
+  margin-top: 12px; transition: opacity 0.2s;
+}
+.update-modal .update-download-btn:hover { opacity: 0.85; }
+.update-modal .update-no-update {
+  text-align: center; padding: 20px; color: var(--text3);
+}
+.update-modal .update-no-update .icon { font-size: 32px; margin-bottom: 8px; }
+.update-modal .update-no-update .text { font-size: 13px; }
+.update-modal #updateProgress { font-family: 'Consolas', 'Courier New', monospace; font-size: 11px; }
+.update-modal #updateProgress::-webkit-scrollbar { width: 4px; }
+.update-modal #updateProgress::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 .profile-modal {
   position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%) scale(0.9);
   background: var(--surface); border: 1px solid var(--border);
@@ -1128,7 +1179,7 @@ html, body {
     <button class="splash-btn" onclick="closeSplash()">✨ Commencer</button>
     <div class="splash-footer">
       <div>tom.ai.official</div>
-      <div class="splash-version">v3.0</div>
+      <div class="splash-version" id="splashVersion">v3.0</div>
     </div>
   </div>
 </div>
@@ -1151,6 +1202,24 @@ html, body {
     </div>
     <button class="profile-save-btn" onclick="saveProfile()">Enregistrer</button>
     <div class="profile-footer">IA-Agent-tom.ai.official · Créé par tom</div>
+  </div>
+</div>
+
+<!-- UPDATE MODAL -->
+<div class="profile-overlay" id="updateOverlay" onclick="closeUpdateModal()"></div>
+<div class="update-modal" id="updateModal">
+  <div class="profile-modal-header">
+    <h3 id="updateModalTitle">🔄 Mise à jour</h3>
+    <button onclick="closeUpdateModal()">✕</button>
+  </div>
+  <div class="profile-modal-body" id="updateModalBody">
+    <div style="text-align:center;padding:20px;color:var(--text3)">
+      <div style="font-size:24px;margin-bottom:12px">⏳</div>
+      <div>Vérification en cours...</div>
+    </div>
+  </div>
+  <div class="profile-footer" id="updateModalFooter">
+    <span id="updateFooterVersion">Version 3.0</span>
   </div>
 </div>
 
@@ -1434,6 +1503,7 @@ html, body {
           <input type="file" id="chatFileInput" style="display:none" multiple onchange="handleFileAttach(this)">
           <span class="agent-pill" onclick="toggleAgentDropdown(event)" id="agentPill" title="Changer d'agent">🎯 Chef de Projet <span class="chevron">▾</span></span>
           <span class="room-pill" onclick="toggleRoomDropdown(event)" id="roomPill" title="Changer de salle">🏠 Général <span class="chevron">▾</span></span>
+          <button onclick="checkUpdate()" title="Vérifier les mises à jour" id="updateBtn" class="update-check-btn">🔄</button>
         </div>
         <div class="chat-input-box">
           <textarea id="chatInput" rows="1" placeholder="Message à l'agent..."
@@ -1484,12 +1554,59 @@ document.addEventListener('DOMContentLoaded', () => {
   const input = document.getElementById('chatInput');
   if (input) input.focus();
   
-  // Splash: auto-hide si deja vu
-  if (localStorage.getItem('ia_splash_seen')) {
-    const splash = document.getElementById('splash');
-    if (splash) { splash.style.display = 'none'; }
-  }
+  // Charger la version depuis le backend
+  fetch('/api/version')
+    .then(r => r.json())
+    .then(v => {
+      CURRENT_VERSION = v.version;
+      // Mettre à jour la version dans l'UI
+      const splashVer = document.getElementById('splashVersion');
+      if (splashVer) splashVer.textContent = 'v' + CURRENT_VERSION;
+      const updateFooterVer = document.getElementById('updateFooterVersion');
+      if (updateFooterVer && !updateFooterVer.textContent.includes('→')) {
+        updateFooterVer.textContent = 'Version ' + CURRENT_VERSION;
+      }
+      // Mettre à jour la version dans la sidebar A propos
+      const aboutVersionEls = document.querySelectorAll('.about-version');
+      aboutVersionEls.forEach(el => { el.textContent = 'v' + CURRENT_VERSION; });
+    })
+    .catch(() => {});
+  
+  // Splash: toujours visible au lancement
+  // (supprime le flag pour le revoir a chaque demarrage)
+  // localStorage.removeItem('ia_splash_seen');
+  
+  // Auto-update sur le bouton update dès le chargement
+  updateUpdateBadgeFromServer();
+  
+  // Check update silencieux au demarrage (apres 5s)
+  setTimeout(() => {
+    updateUpdateBadgeFromServer();
+  }, 5000);
 });
+
+function updateUpdateBadgeFromServer() {
+  fetch('/api/check-update')
+    .then(r => r.json())
+    .then(data => {
+      const btn = document.getElementById('updateBtn');
+      if (data.update_available) {
+        btn.classList.add('has-update');
+        if (!btn.querySelector('.badge-dot')) {
+          const dot = document.createElement('span');
+          dot.className = 'badge-dot';
+          btn.appendChild(dot);
+        }
+        btn.title = 'Mise à jour disponible !';
+      } else {
+        btn.classList.remove('has-update');
+        const dot = btn.querySelector('.badge-dot');
+        if (dot) dot.remove();
+        btn.title = 'Aucune mise à jour disponible';
+      }
+    })
+    .catch(() => {});
+}
 
 // === SESSIONS ===
 let sidCounter = 0;
@@ -2463,6 +2580,183 @@ function loadChangelog() {
     </div>
   `).join('');
   el.innerHTML = html;
+}
+
+// === CHECK UPDATE SYSTEM ===
+let CURRENT_VERSION = '3.0';
+let updateChecked = false;
+
+function checkUpdate() {
+  const btn = document.getElementById('updateBtn');
+  btn.classList.add('loading');
+  btn.title = 'Vérification...';
+
+  fetch('/api/check-update')
+    .then(r => r.json())
+    .then(data => {
+      btn.classList.remove('loading');
+      updateChecked = true;
+      
+      if (data.update_available) {
+        showUpdateAvailable(data);
+        btn.classList.add('has-update');
+        // Add badge dot
+        if (!btn.querySelector('.badge-dot')) {
+          const dot = document.createElement('span');
+          dot.className = 'badge-dot';
+          btn.appendChild(dot);
+        }
+      } else {
+        showNoUpdate(data);
+        btn.classList.remove('has-update');
+        const dot = btn.querySelector('.badge-dot');
+        if (dot) dot.remove();
+        btn.title = 'Aucune mise à jour disponible';
+      }
+    })
+    .catch(err => {
+      btn.classList.remove('loading');
+      btn.title = 'Erreur de vérification';
+      showUpdateError();
+    });
+}
+
+function showUpdateModal(html) {
+  const modal = document.getElementById('updateModal');
+  const overlay = document.getElementById('updateOverlay');
+  document.getElementById('updateModalBody').innerHTML = html;
+  overlay.classList.add('show');
+  modal.classList.add('show');
+}
+
+function closeUpdateModal() {
+  document.getElementById('updateModal').classList.remove('show');
+  document.getElementById('updateOverlay').classList.remove('show');
+}
+
+function showUpdateAvailable(data) {
+  const changesHtml = data.changes && data.changes.length
+    ? '<ul class="update-changelog">' + data.changes.map(c => `<li>${c}</li>`).join('') + '</ul>'
+    : '';
+  
+  const html = `
+    <div style="text-align:center;padding:8px 0 12px">
+      <div style="font-size:36px;margin-bottom:8px">🎉</div>
+      <div style="font-size:18px;font-weight:700;color:var(--success)">${data.title || 'Nouvelle version disponible !'}</div>
+      <div style="font-size:13px;color:var(--text2);margin-top:4px">
+        v${data.current_version} → <strong style="color:var(--text)">v${data.latest_version}</strong>
+      </div>
+    </div>
+    ${changesHtml}
+    ${data.notes ? `<div style="font-size:11px;color:var(--text3);padding:4px 8px;font-style:italic">${data.notes}</div>` : ''}
+    <button class="update-download-btn" onclick="applyUpdate()">
+      ⬇️ Appliquer la mise à jour
+    </button>
+  `;
+  document.getElementById('updateFooterVersion').textContent = `v${data.current_version} → v${data.latest_version}`;
+  showUpdateModal(html);
+}
+
+function applyUpdate() {
+  const body = document.getElementById('updateModalBody');
+  const footer = document.getElementById('updateFooterVersion');
+  
+  // Afficher la progression
+  body.innerHTML = `
+    <div style="padding:12px">
+      <div style="font-size:14px;font-weight:600;color:var(--text);margin-bottom:8px">⬇️ Application de la mise à jour...</div>
+      <div id="updateProgress" style="font-size:12px;color:var(--text3);line-height:1.8;max-height:300px;overflow-y:auto;background:var(--bg);border-radius:6px;padding:8px;font-family:monospace"></div>
+    </div>
+  `;
+  footer.textContent = 'Mise à jour en cours...';
+  
+  const progress = document.getElementById('updateProgress');
+  
+  // Appeler l'API apply-update
+  fetch('/api/apply-update', { method: 'POST' })
+    .then(r => r.json())
+    .then(data => {
+      if (data.success) {
+        // Afficher chaque ligne avec un delai
+        let i = 0;
+        function showNext() {
+          if (i < data.output.length) {
+            progress.innerHTML += data.output[i] + '<br>';
+            progress.scrollTop = progress.scrollHeight;
+            i++;
+            setTimeout(showNext, 300);
+          } else {
+            progress.innerHTML += '<br><span style="color:var(--success);font-weight:700">✅ Mise à jour réussie !</span>';
+            footer.textContent = '✅ Redémarrage du serveur...';
+            // Attendre que le nouveau serveur soit prêt (restart.bat tue l'ancien puis en lance un nouveau)
+            progress.innerHTML += '<br><span style="color:var(--text3)">⏳ Attente du redémarrage du serveur...</span>';
+            setTimeout(() => {
+              progress.innerHTML += '<br><span style="color:var(--text3)">🔃 Rechargement de la page...</span>';
+              setTimeout(() => {
+                // Essai de rechargement avec retry si le serveur n'est pas prêt
+                function tryReload(attempt) {
+                  if (attempt > 10) return; // abandon après 10 essais
+                  fetch('/api/health')
+                    .then(r => {
+                      if (r.ok) {
+                        window.location.reload();
+                      } else {
+                        setTimeout(() => tryReload(attempt + 1), 2000);
+                      }
+                    })
+                    .catch(() => {
+                      setTimeout(() => tryReload(attempt + 1), 2000);
+                    });
+                }
+                tryReload(1);
+              }, 1000);
+            }, 6000);
+          }
+        }
+        showNext();
+      } else {
+        progress.innerHTML = '';
+        (data.output || ['Erreur inconnue']).forEach(line => {
+          progress.innerHTML += '<span style="color:var(--danger)">❌ ' + line + '</span><br>';
+        });
+        footer.textContent = '❌ Échec de la mise à jour';
+      }
+    })
+    .catch(err => {
+      body.innerHTML = `
+        <div class="update-no-update">
+          <div class="icon">⚠️</div>
+          <div style="font-size:15px;font-weight:600;color:var(--text);margin-bottom:4px">Erreur</div>
+          <div class="text">Impossible d'appliquer la mise à jour.<br><span style="font-size:10px">${err.message}</span></div>
+        </div>
+      `;
+      footer.textContent = '❌ Erreur';
+    });
+}
+
+function showNoUpdate(data) {
+  const html = `
+    <div class="update-no-update">
+      <div class="icon">✅</div>
+      <div style="font-size:15px;font-weight:600;color:var(--text);margin-bottom:4px">À jour !</div>
+      <div class="text">Vous utilisez la dernière version (v${data.current_version || CURRENT_VERSION})</div>
+    </div>
+  `;
+  document.getElementById('updateFooterVersion').textContent = `Version ${data.current_version || CURRENT_VERSION}`;
+  showUpdateModal(html);
+}
+
+function showUpdateError() {
+  const html = `
+    <div class="update-no-update">
+      <div class="icon">⚠️</div>
+      <div style="font-size:15px;font-weight:600;color:var(--text);margin-bottom:4px">Impossible de vérifier</div>
+      <div class="text">Vérifiez votre connexion ou réessayez plus tard.<br>
+      <span style="font-size:10px;color:var(--text3)">Assurez-vous que le fichier version.json est bien sur Google Drive.</span></div>
+    </div>
+  `;
+  document.getElementById('updateFooterVersion').textContent = `Version ${CURRENT_VERSION}`;
+  showUpdateModal(html);
 }
 
 // === SIDEBAR COLLAPSIBLE ===
