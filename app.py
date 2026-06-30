@@ -367,22 +367,10 @@ async def apply_update():
         output_lines.append("🔄 Redémarrage du serveur...")
         current_pid = os.getpid()
         
-        # Détecter le chemin Python fiable pour la nouvelle fenêtre
-        # Priorité: py -3 (Python Launcher, System32) > sys.executable > python
-        python_cmd = "py -3"
-        try:
-            subprocess.run(["py", "-3", "--version"], capture_output=True, timeout=5)
-        except:
-            python_cmd = None
-        
-        if not python_cmd:
-            try:
-                subprocess.run([sys.executable, "--version"], capture_output=True, timeout=5)
-                python_cmd = f'"{sys.executable}"'
-            except:
-                python_cmd = "python"
-        
-        output_lines.append(f"  🔍 Commande Python: {python_cmd}")
+        # Utiliser le Python qui tourne actuellement (chemin ABSOLU)
+        # Inutile de tester : c'est celui qui fait tourner le serveur, il marche forcément
+        python_cmd = f'"{sys.executable}"'
+        output_lines.append(f"  🔍 Python: {sys.executable}")
         
         restart_script = repo_path / "restart.bat"
         restart_script.write_text(
