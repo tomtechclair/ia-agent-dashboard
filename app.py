@@ -30,7 +30,7 @@ GOOGLE_DRIVE_UPDATE_ID = os.environ.get("GOOGLE_DRIVE_UPDATE_ID", "1Db6XxdPMVplJ
 UPDATE_CHECK_URL = f"https://drive.google.com/uc?export=view&id={GOOGLE_DRIVE_UPDATE_ID}" if GOOGLE_DRIVE_UPDATE_ID else ""
 
 # Version locale de l'application
-APP_VERSION_DEFAULT = "3.0"
+APP_VERSION_DEFAULT = "3.2"
 APP_VERSION_FILE = Path(__file__).parent / "current_version.txt"
 APP_VERSION_URL = "https://github.com/tomtechclair/ia-agent-dashboard"
 
