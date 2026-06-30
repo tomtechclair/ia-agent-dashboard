@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.pyo
+*.log
+server.log
+server_out.log
+server_err.log
+server.err
+workspace/
+backups/
+help_messages.json
+.env
+*.zip
