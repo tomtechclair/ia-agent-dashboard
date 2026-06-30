@@ -370,7 +370,9 @@ async def apply_update():
         restart_script = repo_path / "restart.bat"
         restart_script.write_text(
             f"@echo off\n"
+            f"title IA-Agent Dashboard (redémarrage)\n"
             f"echo Redémarrage du serveur IA-Agent...\n"
+            f":: Attend que la réponse HTTP soit bien envoyée\n"
             f"timeout /t 2 /nobreak >nul\n"
             f":: Tue l'ancien processus serveur (PID {current_pid})\n"
             f"taskkill /f /pid {current_pid} 2>nul\n"
@@ -381,7 +383,32 @@ async def apply_update():
             f"python app.py\n"
         )
         
-        subprocess.Popen(["cmd", "/c", str(restart_script)], cwd=repo_path)
+        # 🔥 CRITIQUE: Lancer restart.bat via ShellExecute (comme un double-clic)
+        # pour qu'il soit COMPLÈTEMENT INDÉPENDANT du processus Python.
+        # Si on utilise subprocess.Popen, le script meurt quand taskkill tue le parent.
+        try:
+            import ctypes
+            # SW_SHOWNORMAL = 1 (affiche la fenêtre console)
+            ret = ctypes.windll.shell32.ShellExecuteW(
+                None, "open", str(restart_script), None, str(repo_path), 1
+            )
+            if ret <= 32:
+                # ShellExecute a échoué, fallback avec subprocess
+                output_lines.append("  ⚠️ ShellExecute a échoué, fallback subprocess")
+                subprocess.Popen(
+                    ["cmd", "/c", str(restart_script)],
+                    cwd=repo_path,
+                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+                    close_fds=True
+                )
+        except Exception as e:
+            output_lines.append(f"  ⚠️ Erreur ShellExecute: {e}, fallback subprocess")
+            subprocess.Popen(
+                ["cmd", "/c", str(restart_script)],
+                cwd=repo_path,
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+                close_fds=True
+            )
         
         # Retourner le resultat avant que le processus soit tué
         return {
