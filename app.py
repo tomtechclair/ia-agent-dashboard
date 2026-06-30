@@ -371,46 +371,28 @@ async def apply_update():
         restart_script.write_text(
             f"@echo off\n"
             f"title IA-Agent Dashboard (redémarrage)\n"
-            f"echo Redémarrage du serveur IA-Agent...\n"
-            f":: Attend que la réponse HTTP soit bien envoyée\n"
-            f"timeout /t 2 /nobreak >nul\n"
-            f":: Tue l'ancien processus serveur (PID {current_pid})\n"
-            f"taskkill /f /pid {current_pid} 2>nul\n"
-            f":: Attend que le port soit libéré\n"
+            f"echo [1/4] Attente avant arrêt...\n"
             f"timeout /t 3 /nobreak >nul\n"
+            f"echo [2/4] Arrêt de l'ancien serveur (PID {current_pid})...\n"
+            f"taskkill /f /pid {current_pid} 2>nul\n"
+            f"echo [3/4] Attente libération du port...\n"
+            f"timeout /t 4 /nobreak >nul\n"
+            f"echo [4/4] Démarrage du nouveau serveur...\n"
             f"cd /d \"{repo_path}\"\n"
-            f"echo Démarrage du nouveau serveur...\n"
             f"python app.py\n"
+            f"pause\n"
         )
         
-        # 🔥 CRITIQUE: Lancer restart.bat via ShellExecute (comme un double-clic)
-        # pour qu'il soit COMPLÈTEMENT INDÉPENDANT du processus Python.
-        # Si on utilise subprocess.Popen, le script meurt quand taskkill tue le parent.
-        try:
-            import ctypes
-            # SW_SHOWNORMAL = 1 (affiche la fenêtre console)
-            ret = ctypes.windll.shell32.ShellExecuteW(
-                None, "open", str(restart_script), None, str(repo_path), 1
-            )
-            if ret <= 32:
-                # ShellExecute a échoué, fallback avec subprocess
-                output_lines.append("  ⚠️ ShellExecute a échoué, fallback subprocess")
-                subprocess.Popen(
-                    ["cmd", "/c", str(restart_script)],
-                    cwd=repo_path,
-                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
-                    close_fds=True
-                )
-        except Exception as e:
-            output_lines.append(f"  ⚠️ Erreur ShellExecute: {e}, fallback subprocess")
-            subprocess.Popen(
-                ["cmd", "/c", str(restart_script)],
-                cwd=repo_path,
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
-                close_fds=True
-            )
+        # 🔥 CRITIQUE: Utiliser START pour créer une fenêtre INDÉPENDANTE
+        # start crée un nouveau cmd.exe qui n'est PAS un enfant du processus Python
+        # même si le parent est tué par taskkill, cette fenêtre continue
+        subprocess.Popen(
+            f'start "IA-Agent Update" cmd /c "{restart_script}"',
+            shell=True,
+            cwd=repo_path
+        )
         
-        # Retourner le resultat avant que le processus soit tué
+        # Retourner le resultat (le serveur sera tué 3s plus tard par restart.bat)
         return {
             "success": True,
             "output": output_lines,
