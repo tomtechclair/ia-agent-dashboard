@@ -367,6 +367,12 @@ async def apply_update():
         output_lines.append("🔄 Redémarrage du serveur...")
         current_pid = os.getpid()
         
+        # Détecter le chemin complet de Python (important : pas dans le PATH système)
+        python_exe = sys.executable
+        if not python_exe:
+            python_exe = "python"
+        output_lines.append(f"  🔍 Python: {python_exe}")
+        
         restart_script = repo_path / "restart.bat"
         restart_script.write_text(
             f"@echo off\n"
@@ -379,7 +385,7 @@ async def apply_update():
             f"timeout /t 4 /nobreak >nul\n"
             f"echo [4/4] Démarrage du nouveau serveur...\n"
             f"cd /d \"{repo_path}\"\n"
-            f"python app.py\n"
+            f"\"{python_exe}\" app.py\n"
             f"pause\n"
         )
         
